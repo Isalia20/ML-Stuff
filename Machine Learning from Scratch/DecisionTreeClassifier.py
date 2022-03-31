@@ -5,13 +5,15 @@ from Node import Node
 class DecisionTreeClassifier:
 
     def __init__(self,
-                 criterion="entropy",
+                 criterion="entropy",  # done
                  splitter="best",  # done
                  max_depth=6,  # done
                  min_samples_split=2,  # done
                  min_samples_leaf=2,
                  max_features=None,  # done
-                 min_impurity_decrease=0):
+                 min_impurity_decrease=0,
+                 random_state=42  # done
+                 ):
         self.criterion = criterion
         self.splitter = splitter
         self.max_depth = max_depth
@@ -19,6 +21,7 @@ class DecisionTreeClassifier:
         self.min_samples_leaf = min_samples_leaf
         self.max_features = max_features
         self.min_impurity_decrease = min_impurity_decrease
+        self.random_state = random_state
         self.root = None
         print("Decision Tree Classifier")
 
@@ -87,6 +90,7 @@ class DecisionTreeClassifier:
                         split["feature"] = feature
                         split["threshold"] = threshold
         elif self.splitter == "random":
+            np.random.seed(self.random_state)
             num_features = len(features)
             feature = np.random.randint(0, num_features)
             x_feature = x[:, feature]
@@ -119,8 +123,10 @@ class DecisionTreeClassifier:
         if self.max_features is None:
             features = all_feature_indices
         elif self.max_features == "auto" or self.max_features == "sqrt":
+            np.random.seed(self.random_state)
             features = np.random.choice(all_feature_indices, int((self.n_features ** (1 / 2) // 1) + 1))
         elif self.max_features == "log2":
+            np.random.seed(self.random_state)
             features = np.random.choice(all_feature_indices, int(np.math.log2(self.n_features) // 1 + 1))
         else:
             raise Exception("invalid max features selected")
