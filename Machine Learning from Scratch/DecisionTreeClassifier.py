@@ -6,11 +6,11 @@ class DecisionTreeClassifier:
 
     def __init__(self,
                  criterion="cross_entropy",
-                 splitter="best",
+                 splitter="best", # done
                  max_depth=6,  # done
                  min_samples_split=2,  # done
                  min_samples_leaf=2,
-                 max_features=1.0,
+                 max_features= None, #Possible values are auto, sqrt, log2 to add
                  min_impurity_decrease=0):
         self.criterion = criterion
         self.splitter = splitter
@@ -57,16 +57,32 @@ class DecisionTreeClassifier:
         split = {"score": -1,
                  "feature": None,
                  "threshold": None}
-
-        for feature in features:
+        if self.splitter == "best":
+            for feature in features:
+                x_feature = x[:, feature]
+                thresholds = np.unique(x_feature)
+                for threshold in thresholds:
+                    loss_improvement = self._information_gain(x_feature, y, threshold)
+                    if split["score"] <= loss_improvement:
+                        split["score"] = loss_improvement
+                        split["feature"] = feature
+                        split["threshold"] = threshold
+        elif self.splitter == "random":
+            num_features = len(features)
+            feature = np.random.randint(0, num_features)
             x_feature = x[:, feature]
-            thresholds = np.unique(x_feature)
-            for threshold in thresholds:
-                loss_improvement = self._information_gain(x_feature, y, threshold)
-                if split["score"] <= loss_improvement:
-                    split["score"] = loss_improvement
-                    split["feature"] = feature
-                    split["threshold"] = threshold
+
+            feature_mean = np.mean(x_feature)
+            feature_stdev = np.std(x_feature)
+            threshold = np.random.normal(feature_mean, feature_stdev)
+
+            loss_improvement = self._information_gain(x_feature, y, threshold)
+            split["score"] = loss_improvement
+            split["feature"] = feature
+            split["threshold"] = threshold
+        else:
+            raise Exception ("non-valid splitter selected")
+
         return split["feature"], split["threshold"]
 
     def _build_tree(self, x, y, depth=0):
