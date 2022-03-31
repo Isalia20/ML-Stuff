@@ -10,7 +10,7 @@ class DecisionTreeClassifier:
                  max_depth=6,  # done
                  min_samples_split=2,  # done
                  min_samples_leaf=2,
-                 max_features= None, #Possible values are auto, sqrt, log2 to add
+                 max_features= None, # done
                  min_impurity_decrease=0):
         self.criterion = criterion
         self.splitter = splitter
@@ -21,6 +21,7 @@ class DecisionTreeClassifier:
         self.min_impurity_decrease = min_impurity_decrease
         self.root = None
         print("Decision Tree Classifier")
+
 
     def _is_finished(self, tree_depth):
         if (self.max_depth <= tree_depth or
@@ -57,6 +58,7 @@ class DecisionTreeClassifier:
         split = {"score": -1,
                  "feature": None,
                  "threshold": None}
+
         if self.splitter == "best":
             for feature in features:
                 x_feature = x[:, feature]
@@ -81,20 +83,31 @@ class DecisionTreeClassifier:
             split["feature"] = feature
             split["threshold"] = threshold
         else:
-            raise Exception ("non-valid splitter selected")
+            raise Exception ("invalid splitter selected")
 
         return split["feature"], split["threshold"]
 
     def _build_tree(self, x, y, depth=0):
-        # we build the tree recursively so
+        # we build the tree recursively
         self.n_samples = x.shape[0]
+        self.n_features = x.shape[1]
         self.n_class_labels = len(np.unique(y))
 
         if self._is_finished(depth):
             most_common_label = np.argmax(np.bincount(y))
             return Node(value=most_common_label)
 
-        features = [i for i in range(x.shape[1])]
+        all_feature_indices = np.array(list(range(x.shape[1])))
+
+        if self.max_features is None:
+            features = all_feature_indices
+        elif self.max_features == "auto" or self.max_features == "sqrt":
+            features = np.random.choice(all_feature_indices, int((self.n_features ** (1/2) // 1) + 1))
+        elif self.max_features == "log2":
+            features = np.random.choice(all_feature_indices, int(np.math.log2(self.n_features) // 1 + 1))
+        else:
+            raise Exception("invalid max features selected")
+
         # Create split
         best_feature_for_split, threshold_split = self._best_split(x, y, features)
         left_ids, right_ids = self._create_split(x[:, best_feature_for_split], threshold_split)
