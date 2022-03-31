@@ -5,12 +5,12 @@ from Node import Node
 class DecisionTreeClassifier:
 
     def __init__(self,
-                 criterion="cross_entropy",
-                 splitter="best", # done
+                 criterion="entropy",
+                 splitter="best",  # done
                  max_depth=6,  # done
                  min_samples_split=2,  # done
                  min_samples_leaf=2,
-                 max_features= None, # done
+                 max_features=None,  # done
                  min_impurity_decrease=0):
         self.criterion = criterion
         self.splitter = splitter
@@ -21,7 +21,6 @@ class DecisionTreeClassifier:
         self.min_impurity_decrease = min_impurity_decrease
         self.root = None
         print("Decision Tree Classifier")
-
 
     def _is_finished(self, tree_depth):
         if (self.max_depth <= tree_depth or
@@ -37,20 +36,38 @@ class DecisionTreeClassifier:
         return entropy
 
     @staticmethod
+    def _calc_gini(y):
+        probabilities = np.bincount(y) / len(y)
+        gini = 1 - np.sum([probability ** 2 for probability in probabilities if probability > 0])
+        return gini
+
+    @staticmethod
     def _create_split(x, threshold):
         left_ids = np.argwhere(x <= threshold).flatten()
         right_ids = np.argwhere(x > threshold).flatten()
         return left_ids, right_ids
 
+    def _calculate_loss_(self, y, criterion):
+        if criterion == "entropy":
+            loss = self._calc_entropy(y)
+        elif criterion == "gini":
+            loss = self._calc_gini(y)
+        else:
+            raise Exception("invalid criterion selected")
+        return loss
+
     def _information_gain(self, x, y, threshold):
-        parent_loss = self._calc_entropy(y)
+        parent_loss = self._calculate_loss_(y, self.criterion)
+
         left_ids, right_ids = self._create_split(x, threshold)
         n, n_left, n_right = len(y), len(left_ids), len(right_ids)
 
         if n_left == 0 or n_right == 0:
             return 0
 
-        child_loss = n_left / n * self._calc_entropy(y[left_ids]) + n_right / n * self._calc_entropy(y[right_ids])
+        child_loss = \
+            n_left / n * self._calculate_loss_(y[left_ids], self.criterion) + \
+            n_right / n * self._calculate_loss_(y[right_ids], self.criterion)
 
         return parent_loss - child_loss
 
@@ -83,7 +100,7 @@ class DecisionTreeClassifier:
             split["feature"] = feature
             split["threshold"] = threshold
         else:
-            raise Exception ("invalid splitter selected")
+            raise Exception("invalid splitter selected")
 
         return split["feature"], split["threshold"]
 
@@ -102,7 +119,7 @@ class DecisionTreeClassifier:
         if self.max_features is None:
             features = all_feature_indices
         elif self.max_features == "auto" or self.max_features == "sqrt":
-            features = np.random.choice(all_feature_indices, int((self.n_features ** (1/2) // 1) + 1))
+            features = np.random.choice(all_feature_indices, int((self.n_features ** (1 / 2) // 1) + 1))
         elif self.max_features == "log2":
             features = np.random.choice(all_feature_indices, int(np.math.log2(self.n_features) // 1 + 1))
         else:
