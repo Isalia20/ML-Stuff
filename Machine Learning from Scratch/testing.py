@@ -2,7 +2,7 @@ from sklearn import datasets
 from DecisionTreeClassifier import DecisionTreeClassifier
 import numpy as np
 
-clf = DecisionTreeClassifier(max_depth=10)
+clf = DecisionTreeClassifier(max_depth=1000)
 data = datasets.load_breast_cancer()
 X, y = data.data, data.target
 

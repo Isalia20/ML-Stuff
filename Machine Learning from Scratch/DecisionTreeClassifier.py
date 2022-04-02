@@ -5,14 +5,13 @@ from Node import Node
 class DecisionTreeClassifier:
 
     def __init__(self,
-                 criterion="entropy",  # done
-                 splitter="best",  # done
-                 max_depth=6,  # done
-                 min_samples_split=2,  # done
-                 min_samples_leaf=1,  # done
-                 max_features=None,  # done
-                 min_impurity_decrease=0,
-                 random_state=42  # done
+                 criterion="entropy",
+                 splitter="best",
+                 max_depth=6,
+                 min_samples_split=2,
+                 min_samples_leaf=1,
+                 max_features=None,
+                 random_state=42
                  ):
         self.criterion = criterion
         self.splitter = splitter
@@ -20,7 +19,6 @@ class DecisionTreeClassifier:
         self.min_samples_split = min_samples_split
         self.min_samples_leaf = min_samples_leaf
         self.max_features = max_features
-        self.min_impurity_decrease = min_impurity_decrease
         self.random_state = random_state
         self.root = None
         print("Decision Tree Classifier")
@@ -116,7 +114,6 @@ class DecisionTreeClassifier:
 
         if self._is_finished(depth):
             most_common_label = np.argmax(np.bincount(y))
-
             return Node(value=most_common_label, n_count=len(y))
 
         all_feature_indices = np.array(list(range(x.shape[1])))
