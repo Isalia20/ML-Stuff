@@ -1,7 +1,6 @@
 import numpy as np
 from Node import Node
 
-
 class DecisionTreeClassifier:
 
     def __init__(self,
@@ -116,7 +115,7 @@ class DecisionTreeClassifier:
 
         if self._is_finished(depth):
             most_common_label = np.argmax(np.bincount(y))
-            return Node(value=most_common_label)
+            return Node(value=most_common_label,n_count = len(y))
 
         all_feature_indices = np.array(list(range(x.shape[1])))
 
@@ -137,8 +136,19 @@ class DecisionTreeClassifier:
         left_child = self._build_tree(x[left_ids, :], y[left_ids], depth + 1)
         right_child = self._build_tree(x[right_ids, :], y[right_ids], depth + 1)
 
+        most_common_label_prune = np.argmax(np.bincount(y))
+
         return Node(feature=best_feature_for_split, threshold=threshold_split, left=left_child, right=right_child,
-                    value=None)
+                    n_count = len(y), value=None, value_for_pruning=most_common_label_prune)
+
+    def _prune_tree(self, tree):
+
+
+
+        if node.is_leaf() & node.n_count < self.min_samples_leaf:
+
+
+            return
 
     def _traverse_tree(self, x, node):
         # If it's a leaf
@@ -153,6 +163,8 @@ class DecisionTreeClassifier:
 
     def fit(self, x, y):
         self.root = self._build_tree(x, y)
+        tree = self.root
+        return self.root
 
     def predict(self, x):
         predictions = [self._traverse_tree(x_scalar, self.root) for x_scalar in x]
