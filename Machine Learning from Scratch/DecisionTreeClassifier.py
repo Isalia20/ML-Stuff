@@ -1,6 +1,7 @@
 import numpy as np
 from Node import Node
 
+
 class DecisionTreeClassifier:
 
     def __init__(self,
@@ -8,7 +9,7 @@ class DecisionTreeClassifier:
                  splitter="best",  # done
                  max_depth=6,  # done
                  min_samples_split=2,  # done
-                 min_samples_leaf=2,
+                 min_samples_leaf=1,  # done
                  max_features=None,  # done
                  min_impurity_decrease=0,
                  random_state=42  # done
@@ -64,8 +65,8 @@ class DecisionTreeClassifier:
         left_ids, right_ids = self._create_split(x, threshold)
         n, n_left, n_right = len(y), len(left_ids), len(right_ids)
 
-        if n_left == 0 or n_right == 0:
-            return 0
+        if n_left < self.min_samples_leaf or n_right < self.min_samples_leaf:
+            return -1e18
 
         child_loss = \
             n_left / n * self._calculate_loss_(y[left_ids], self.criterion) + \
@@ -115,7 +116,8 @@ class DecisionTreeClassifier:
 
         if self._is_finished(depth):
             most_common_label = np.argmax(np.bincount(y))
-            return Node(value=most_common_label,n_count = len(y))
+
+            return Node(value=most_common_label, n_count=len(y))
 
         all_feature_indices = np.array(list(range(x.shape[1])))
 
@@ -136,19 +138,8 @@ class DecisionTreeClassifier:
         left_child = self._build_tree(x[left_ids, :], y[left_ids], depth + 1)
         right_child = self._build_tree(x[right_ids, :], y[right_ids], depth + 1)
 
-        most_common_label_prune = np.argmax(np.bincount(y))
-
         return Node(feature=best_feature_for_split, threshold=threshold_split, left=left_child, right=right_child,
-                    n_count = len(y), value=None, value_for_pruning=most_common_label_prune)
-
-    def _prune_tree(self, tree):
-
-
-
-        if node.is_leaf() & node.n_count < self.min_samples_leaf:
-
-
-            return
+                    value=None, n_count=len(y))
 
     def _traverse_tree(self, x, node):
         # If it's a leaf
@@ -163,8 +154,6 @@ class DecisionTreeClassifier:
 
     def fit(self, x, y):
         self.root = self._build_tree(x, y)
-        tree = self.root
-        return self.root
 
     def predict(self, x):
         predictions = [self._traverse_tree(x_scalar, self.root) for x_scalar in x]
