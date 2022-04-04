@@ -1,13 +1,11 @@
-#WIP
 import numpy as np
 
 
 class PCA:
     def __init__(self,
-                 n_components=None,
-                 random_state=42):
+                 n_components=None):
         self.n_components = n_components
-        self.random_state = random_state
+        self.principal_components = None
 
     @staticmethod
     def _normalize_features(self, x):
@@ -20,7 +18,6 @@ class PCA:
         mat_x = np.matrix(x)
         cov_matrix = np.matmul(mat_x.T, mat_x)
         cov_matrix = cov_matrix * 1 / x.shape[0]
-
         return cov_matrix
 
     def _get_eigenvectors(self, x):
@@ -35,6 +32,9 @@ class PCA:
         return principal_components
 
     def fit(self, x):
-        self._calculate_principal_components(x)
+        self.principal_components = self._calculate_principal_components(x)
+        self.principal_components = self.principal_components[:, :self.n_components]
 
-    def transform(self,x):
+    def transform(self, x):
+        transformed_matrix = np.matmul(x, self.principal_components)
+        return transformed_matrix
