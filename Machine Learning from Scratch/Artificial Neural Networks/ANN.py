@@ -13,12 +13,12 @@ class FeedForwardNeuralNetwork:
     def _initialize_network(self, x):
         self.network_architecture[0] = x.shape[1]
 
-    def add_change_layer(self, layer_index, n_neurons):
+    def add_change_layer(self, layer_index, n_neurons, activation_function):
         if layer_index < 0:
             raise Exception("You can't change/add layer before input")
         elif layer_index == 0:
             raise Exception("You can't change input layer's neuron count. Change shape of X and reinitialize class")
-        self.network_architecture[layer_index] = n_neurons
+        self.network_architecture[layer_index] = (n_neurons,activation_function)
 
     def _generate_weight_matrices(self):
         for layer_index in range(1, self.network_architecture.keys()):
@@ -28,6 +28,19 @@ class FeedForwardNeuralNetwork:
                                  (self.network_architecture[layer_index - 1],
                                   self.network_architecture[layer_index]))
 
-    # def _feed_forward(self, x):
-    #     x = np.matrix(x)
-    #     np.matmul(x, self.weight_matrices[0])
+    def _feed_forward(self, x, layer_index):
+        x = np.matrix(x)
+        weight_matrix = self.weight_matrices[layer_index]
+        pre_activation = np.matmul(x, weight_matrix)
+        if weight_matrix[layer_index][1] == "relu":
+            activation = pre_activation * (pre_activation > 0)
+
+
+
+
+abs(np.random.normal(0,1, (4,5)) * (np.random.normal(0,1, (4,5)) > 0))
+
+
+
+
+
