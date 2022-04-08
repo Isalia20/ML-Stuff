@@ -33,24 +33,26 @@ class FeedForwardNeuralNetwork:
                                         self.network_architecture[layer_index][0])),  # Normal weights
                  np.random.normal(0, 1, (1, self.network_architecture[layer_index][0])))  # Bias
 
-    def feed_forward(self, previous_layer_output, layer_index):
-        x = previous_layer_output
-        weight_matrix = self.weight_matrices[layer_index][0]
-        bias = self.weight_matrices[layer_index][1]
-        if self.network_architecture[layer_index][2]:
-            pre_activation = x @ weight_matrix + bias
-        else:
-            pre_activation = x @ weight_matrix
+    def feed_forward(self, x):
+        layers = len(self.network_architecture)
+        x_input = x
+        for layer_index in range(1, layers):
+            weight_matrix = self.weight_matrices[layer_index][0]
+            bias = self.weight_matrices[layer_index][1]
+            if self.network_architecture[layer_index][2]:
+                pre_activation = x_input @ weight_matrix + bias
+            else:
+                pre_activation = x_input @ weight_matrix
 
-        if self.network_architecture[layer_index][1] == "relu":
-            activation = pre_activation * (pre_activation > 0)
-        elif self.network_architecture[layer_index][1] == "logistic":
-            activation = 1 / (1 + np.exp(-pre_activation))
-
-        return activation
+            if self.network_architecture[layer_index][1] == "relu":
+                activation = pre_activation * (pre_activation > 0)
+            elif self.network_architecture[layer_index][1] == "logistic":
+                activation = 1 / (1 + np.exp(-pre_activation))
+            x_input = activation
+        return x_input
 
     def make_prediction(self, last_output):
-        y_pred = last_output >= self.output_threshold
+        y_pred = (last_output >= self.output_threshold) * 1
         return y_pred
 
     @staticmethod
