@@ -62,5 +62,5 @@ class FeedForwardNeuralNetwork:
         loss = -np.sum(y * np.array([np.math.log(i) for i in y_pred]) + (1 - y) * np.array([np.math.log(1 - i) for i in y_pred]))
         return loss
 
-    def _backwards_prop(self, y, y_pred):
-        return 2
+    def backwards_prop(self, y, y_pred):
+        return
