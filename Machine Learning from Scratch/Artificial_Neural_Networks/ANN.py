@@ -51,13 +51,15 @@ class FeedForwardNeuralNetwork:
             x_input = activation
         return x_input
 
-    def make_prediction(self, last_output):
-        y_pred = (last_output >= self.output_threshold) * 1
+    def make_prediction(self, output):
+        y_pred = (output >= self.output_threshold) * 1
         return y_pred
 
     @staticmethod
-    def _calculate_loss(y, y_pred):
-        loss = - (y * np.math.log(y_pred) + (1 - y) * np.math.log(1 - y_pred))
+    def calculate_loss(y, y_pred):
+        y = np.reshape(y, (-1,))
+        y_pred = np.reshape(y_pred, (-1,))
+        loss = -np.sum(y * np.array([np.math.log(i) for i in y_pred]) + (1 - y) * np.array([np.math.log(1 - i) for i in y_pred]))
         return loss
 
     def _backwards_prop(self, y, y_pred):
