@@ -12,21 +12,67 @@ ffn.generate_weight_matrices()
 
 y_pred = ffn.feed_forward(X)
 
-tmp = ffn.backwards_prop(y)
+dL_da, da_dz, dz_da_w = ffn.backwards_prop(y)
+
+dL_da.shape
+da_dz.shape
+dz_da_w.shape
+
+
+
+dL_da.shape
+da_dz.shape
+dz_dw.shape
+
+
+
+
+
+dL_dw_last.shape
+dw_da.shape
+da_dz.shape
+dz_dw.shape
+
+
+
+ffn.network_architecture
+
+
+
+
+tmp = ffn.weight_matrices[1]
+
+tmp = (2,1)
+
+
+for index, layer_index in enumerate(reversed(range(1, layers))):
+    print(index,layer_index)
+
+
+ffn.weight_matrices[2][0]
+
+
+layers = len(ffn.network_architecture)
+
+layers
+
+
+
 
 dL_dw,dL_db,w,b = ffn.backwards_prop(y)
 
-
-dL_dw.reshape((-1,1))
-dL_db
-w
-b
+for i in reversed(range(1,6)):
+    print(i)
 
 
+ffn.network_architecture
 
-tmp[0].shape
 
 
-tmp
+(X > 0).astype(int)
 
-np.sum(tmp,axis = 0)
+
+
+
+
+
