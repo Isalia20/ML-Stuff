@@ -7,14 +7,17 @@ class FeedForwardNeuralNetwork:
     def __init__(self,
                  random_state=42,
                  output_threshold=0.5,
-                 x=None
+                 x=None,
+                 learning_rate = 0.01
                  ):
         if x is None:
             raise Exception("You need to initialize the class with X")
         self.random_state = random_state
         self.weight_matrices = {}
         self.output_threshold = output_threshold
+        self.cache = {}
         self.x = x
+        self.learning_rate = learning_rate
         # Initializing network architecture with input shape n_neurons, activation_function(None at layer 0)
         # and bias neuron(also False) boolean
         self.network_architecture = {0: (self.x.shape[1], None, False)}
@@ -33,6 +36,11 @@ class FeedForwardNeuralNetwork:
                                         self.network_architecture[layer_index][0])),  # Normal weights
                  np.random.normal(0, 1, (1, self.network_architecture[layer_index][0])))  # Bias
 
+    @staticmethod
+    def sigmoid_function(z):
+        exp_z = np.array([np.math.exp(i) for i in z]).reshape(z.shape[0], z.shape[1])
+        return 1/(1 + exp_z)
+
     def feed_forward(self, x):
         layers = len(self.network_architecture)
         x_input = x
@@ -47,7 +55,8 @@ class FeedForwardNeuralNetwork:
             if self.network_architecture[layer_index][1] == "relu":
                 activation = pre_activation * (pre_activation > 0)
             elif self.network_architecture[layer_index][1] == "logistic":
-                activation = 1 / (1 + np.exp(-pre_activation))
+                activation = self.sigmoid_function(pre_activation)
+            self.cache[layer_index] = (x_input,pre_activation, activation)
             x_input = activation
         return x_input
 
@@ -62,5 +71,21 @@ class FeedForwardNeuralNetwork:
         loss = -np.sum(y * np.array([np.math.log(i) for i in y_pred]) + (1 - y) * np.array([np.math.log(1 - i) for i in y_pred]))
         return loss
 
-    def backwards_prop(self, y, y_pred):
-        return
+    def backwards_prop(self, y):
+        m = self.x.shape[0]
+        y = y.reshape((-1, 1))
+        last_layer = list(self.cache.keys())[-1]
+        a = self.cache[last_layer][2]
+        z = self.cache[last_layer][1]
+        x = self.cache[last_layer][0]
+        dL_da = - (y/a + (1-y)/(1-a))
+        da_dz = self.sigmoid_function(z) * (1 - self.sigmoid_function(z))
+        dz_dw = x
+        dz_db = 1
+        dL_dw = (1/m * np.sum(dL_da * da_dz * dz_dw, axis=0)).reshape((-1,1))
+        dL_db = (1/m * np.sum(dL_da * da_dz * dz_db, axis=0)).reshape((-1,1))
+        w = self.weight_matrices[last_layer][0]
+        b = self.weight_matrices[last_layer][1]
+        w = w - self.learning_rate * dL_dw
+        b = b - self.learning_rate * dL_db
+        return w,b

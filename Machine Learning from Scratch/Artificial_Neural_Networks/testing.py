@@ -12,6 +12,21 @@ ffn.generate_weight_matrices()
 
 y_pred = ffn.feed_forward(X)
 
-ffn.calculate_loss(y,y_pred)
+tmp = ffn.backwards_prop(y)
 
-y_pred
+dL_dw,dL_db,w,b = ffn.backwards_prop(y)
+
+
+dL_dw.reshape((-1,1))
+dL_db
+w
+b
+
+
+
+tmp[0].shape
+
+
+tmp
+
+np.sum(tmp,axis = 0)
