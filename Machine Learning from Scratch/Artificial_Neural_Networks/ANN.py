@@ -39,7 +39,7 @@ class FeedForwardNeuralNetwork:
 
     @staticmethod
     def sigmoid_function(z):
-        exp_z = np.array([np.math.exp(i) for i in z]).reshape(z.shape[0], z.shape[1])
+        exp_z = np.exp(-z)
         return 1/(1 + exp_z)
 
     def feed_forward(self, x):
@@ -49,7 +49,7 @@ class FeedForwardNeuralNetwork:
             weight_matrix = self.weight_matrices[layer_index][0]
             bias = self.weight_matrices[layer_index][1]
             if self.network_architecture[layer_index][2]:
-                pre_activation = x_input @ weight_matrix + bias
+                pre_activation = (x_input @ weight_matrix) + bias
             else:
                 pre_activation = x_input @ weight_matrix
 
@@ -57,7 +57,7 @@ class FeedForwardNeuralNetwork:
                 activation = pre_activation * (pre_activation > 0)
             elif self.network_architecture[layer_index][1] == "logistic":
                 activation = self.sigmoid_function(pre_activation)
-            self.cache[layer_index] = (x_input,pre_activation, activation)
+            self.cache[layer_index] = (x_input, pre_activation, activation)
             x_input = activation
         return x_input
 
@@ -84,32 +84,30 @@ class FeedForwardNeuralNetwork:
                 dL_da = -(y/a + (1-y)/(1-a))
                 if self.network_architecture[layer_index][1] == "logistic":
                     da_dz = self.sigmoid_function(z) * (1 - self.sigmoid_function(z))  # Need to implement other functions as well
-                dz_dw = x
-                dz_db = 1
-                dL_dw = dL_da * da_dz * dz_dw
-                dL_db = dL_da * da_dz * dz_db
-                dL_dw_final = (1/m * np.sum(dL_dw, axis=0)).reshape((-1,1))
-                dL_db_final = (1/m * np.sum(dL_db, axis=0)).reshape((-1,1))
-                self.cache_backprop[layer_index] = (dL_da, da_dz, dz_dw, dL_dw, dL_db)
+                dL_dz = dL_da * da_dz
+                dL_dw = (1/m) * np.dot(dL_dz.T, x)
+                dL_db = (1/m) * np.sum(dL_dz, axis=0, keepdims=True)
+                self.cache_backprop[layer_index] = (dL_dw, dL_db)
             else:
-                dz_da_w = self.weight_matrices[layer_index][0]
-                dz_da_b = self.weight_matrices[layer_index][1]
-                return dL_da, da_dz, dz_da_w
-                dL_da_w = dL_da * da_dz * dz_da_w  # we need to use this for w
-                dL_da_b = dL_da * da_dz * dz_da_b  # we need to use this for b
-                dz_dw = x
-                db_da = 1
+                dL_dz = np.dot(dL_da.T, da_dz)
+                dL_da = dL_dz * self.weight_matrices[layer_index][0]
                 if self.network_architecture[layer_index][1] == "relu":
                     da_dz = (z > 0).astype(int)
-                dz_db = 1
-                return dL_da,da_dz,dz_dw
-                dL_dw = dL_da_w * da_dz * dz_dw
-                dL_db = dL_da_b * da_dz * dz_db
-                dL_dw_final = (1/m * np.sum(dL_dw, axis=0)).reshape((-1, 1))
-                dL_db_final = (1/m * np.sum(dL_db, axis=0)).reshape((-1, 1))
+                dz_dw = x
+                da_dw = np.dot(dz_dw.T, da_dz)
+                dL_dw = (1/m) * (da_dw * dL_da)
+                dL_db = (1/m) * np.sum(dL_dz, axis=0, keepdims=True)
+                self.cache_backprop[layer_index] = (dL_dw, dL_db)
 
+        for layer_index in reversed(range(1, layers)):
             w = self.weight_matrices[layer_index][0]
             b = self.weight_matrices[layer_index][1]
-            w = w - self.learning_rate * dL_dw_final
-            b = b - self.learning_rate * dL_db_final
+            w = w - self.learning_rate * self.cache_backprop[layer_index][0]
+            b = b - self.learning_rate * self.cache_backprop[layer_index][1]
             self.weight_matrices[layer_index] = (w, b)
+
+    def train(self, x, y, epochs):
+        for i in range(epochs):
+            y_pred = self.feed_forward(x)
+            print("Loss for epoch " + str(i) + " is " + str(self.calculate_loss(y, y_pred)))
+            self.backwards_prop(y)
