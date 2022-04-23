@@ -8,7 +8,7 @@ class FeedForwardNeuralNetwork:
                  random_state=42,
                  output_threshold=0.5,
                  x=None,
-                 learning_rate = 0.01
+                 learning_rate=0.01
                  ):
         if x is None:
             raise Exception("You need to initialize the class with X")
