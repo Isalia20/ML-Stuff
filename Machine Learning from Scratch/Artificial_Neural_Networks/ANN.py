@@ -113,3 +113,5 @@ class FeedForwardNeuralNetwork:
             y_pred = self.feed_forward(x)
             print("Loss for epoch " + str(i) + " is " + str(self.calculate_loss(y, y_pred)))
             self.backwards_prop(y)
+
+# Not finished
