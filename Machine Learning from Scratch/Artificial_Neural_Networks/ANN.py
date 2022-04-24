@@ -8,7 +8,7 @@ class FeedForwardNeuralNetwork:
                  random_state=42,
                  output_threshold=0.5,
                  x=None,
-                 learning_rate=0.01
+                 learning_rate=0.1
                  ):
         if x is None:
             raise Exception("You need to initialize the class with X")
@@ -33,9 +33,8 @@ class FeedForwardNeuralNetwork:
     def generate_weight_matrices(self):
         for layer_index in range(1, len(self.network_architecture.keys())):
             self.weight_matrices[layer_index] = \
-                (np.random.normal(0, 1, (self.network_architecture[layer_index - 1][0],
-                                        self.network_architecture[layer_index][0])),  # Normal weights
-                 np.random.normal(0, 1, (1, self.network_architecture[layer_index][0])))  # Bias
+                (np.random.normal(0, 0.1, (self.network_architecture[layer_index - 1][0],
+                                        self.network_architecture[layer_index][0])))  # Weights
 
     @staticmethod
     def sigmoid_function(z):
@@ -46,10 +45,9 @@ class FeedForwardNeuralNetwork:
         layers = len(self.network_architecture)
         x_input = x
         for layer_index in range(1, layers):
-            weight_matrix = self.weight_matrices[layer_index][0]
-            bias = self.weight_matrices[layer_index][1]
+            weight_matrix = self.weight_matrices[layer_index]
             if self.network_architecture[layer_index][2]:
-                pre_activation = (x_input @ weight_matrix) + bias
+                pre_activation = (x_input @ weight_matrix)
             else:
                 pre_activation = x_input @ weight_matrix
 
@@ -77,34 +75,38 @@ class FeedForwardNeuralNetwork:
         y = y.reshape((-1, 1))
         layers = len(self.network_architecture)
         for index, layer_index in enumerate(reversed(range(1, layers))):
-            a = self.cache[layer_index][2]
-            z = self.cache[layer_index][1]
-            x = self.cache[layer_index][0]
+            a_backprop = self.cache[layer_index][2]
+            z_backprop = self.cache[layer_index][1]
+            x_backprop = self.cache[layer_index][0]
             if index == 0:
-                dL_da = -(y/a + (1-y)/(1-a))
+                dL_da = -(1/m) * (y / a_backprop + (1-y) / (1-a_backprop))
                 if self.network_architecture[layer_index][1] == "logistic":
-                    da_dz = self.sigmoid_function(z) * (1 - self.sigmoid_function(z))  # Need to implement other functions as well
+                    da_dz = self.sigmoid_function(z_backprop) * (1 - self.sigmoid_function(z_backprop))  # Need to implement other functions as well
                 dL_dz = dL_da * da_dz
-                dL_dw = (1/m) * np.dot(dL_dz.T, x)
-                dL_db = (1/m) * np.sum(dL_dz, axis=0, keepdims=True)
-                self.cache_backprop[layer_index] = (dL_dw, dL_db)
+                dL_dw = np.dot(x_backprop.T, dL_dz)
+                self.cache_backprop[layer_index] = (dL_dw)
             else:
-                dL_dz = np.dot(dL_da.T, da_dz)
-                dL_da = dL_dz * self.weight_matrices[layer_index][0]
+                dL_dz = np.sum(dL_dz)
+                dz_da = self.weight_matrices[layer_index + 1]
                 if self.network_architecture[layer_index][1] == "relu":
-                    da_dz = (z > 0).astype(int)
-                dz_dw = x
-                da_dw = np.dot(dz_dw.T, da_dz)
-                dL_dw = (1/m) * (da_dw * dL_da)
-                dL_db = (1/m) * np.sum(dL_dz, axis=0, keepdims=True)
-                self.cache_backprop[layer_index] = (dL_dw, dL_db)
+                    da_dz = (z_backprop > 0).astype(int)
+                elif self.network_architecture[layer_index][1] == "logistic":
+                    da_dz = self.sigmoid_function(z_backprop) * (1 - self.sigmoid_function(z_backprop))
+                dz_dw = x_backprop
+                tmp = (dz_dw.T @ da_dz)
+                tmp = tmp * dz_da.T
+                tmp = tmp * dL_dz
+                dL_dw = tmp
+                # dL_dw = (1/m) * np.matmul(dz_dw.T, dL_dz)
+                self.cache_backprop[layer_index] = (dL_dw)
 
         for layer_index in reversed(range(1, layers)):
-            w = self.weight_matrices[layer_index][0]
-            b = self.weight_matrices[layer_index][1]
-            w = w - self.learning_rate * self.cache_backprop[layer_index][0]
-            b = b - self.learning_rate * self.cache_backprop[layer_index][1]
-            self.weight_matrices[layer_index] = (w, b)
+            w = self.weight_matrices[layer_index]
+            # b = self.weight_matrices[layer_index][1]
+            #print(self.cache_backprop[layer_index])
+            w = w - self.learning_rate * self.cache_backprop[layer_index]
+            # b = b - self.learning_rate * self.cache_backprop[layer_index][1]
+            self.weight_matrices[layer_index] = (w)
 
     def train(self, x, y, epochs):
         for i in range(epochs):
