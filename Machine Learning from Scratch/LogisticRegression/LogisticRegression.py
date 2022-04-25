@@ -18,6 +18,8 @@ class LogisticRegression:
         self.tol = tol
         self.class_imbalance = class_imbalance
         self.threshold = threshold
+        self.weight_matrix = None
+        self.bias = 0
         self.random_state = random_state
 
     def _initialize_weight_matrices(self, x):
@@ -31,21 +33,22 @@ class LogisticRegression:
         a = 1/(1 + np.exp(-z))
         return a
 
-    def fit(self, x, y):  # TODO add bias
+    def fit(self, x, y):
         self._initialize_weight_matrices(x)
         m = x.shape[0]
         y = y.reshape(-1, 1)
-        for _ in range(self.max_iter):
+        for i in range(self.max_iter):
             a = self._sigmoid_function(x @ self.weight_matrix + self.bias)
             derivative = (1/m) * (x.T @ (a - y))  # shape of (5,m) by shape of (m,1). Result is (5,1) shape of W
             self.weight_matrix -= self.learning_rate * derivative
             # Updating bias term if fit intercept is True
-            # if self.fit_intercept:
-            #     derivative_b = (1 / m) * np.sum(prediction - y)
-            #     self.bias -= self.learning_rate * derivative_b
-            # Stopping fitting if loss is too low
-            # if np.sum((1/m) * ((a - y)**2)) < self.tol:
-            #     break
+            if self.fit_intercept:
+                derivative_b = (1/m) * np.sum(a - y)
+                self.bias -= self.learning_rate * derivative_b
+            # Stopping fitting if loss is too low, minus sign is not needed here as we compare it to pos value
+            if abs(np.sum(y * np.log(a) - (1-y) * np.log(1-a))) < self.tol:
+                print("minimum loss achieved on iteration " + str(i))
+                break
 
     def predict_proba(self, x):
         y_pred = self._sigmoid_function(x @ self.weight_matrix + self.bias)
