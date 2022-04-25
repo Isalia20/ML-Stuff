@@ -7,12 +7,12 @@ class LinearRegression:
                  fit_intercept=True,
                  learning_rate=0.1,
                  steps=100,
-                 min_loss=0.001  # Loss after which fitting should stop
+                 tol=0.001  # Loss after which fitting should stop
                  ):
         self.fit_intercept = fit_intercept
         self.learning_rate = learning_rate
         self.steps = steps
-        self.min_loss = min_loss
+        self.tol = tol
         self.weight_matrix = None
         self.bias = 0
 
@@ -34,7 +34,7 @@ class LinearRegression:
                 derivative_b = (1 / m) * np.sum(prediction - y)
                 self.bias -= self.learning_rate * derivative_b
             # Stopping fitting if loss is too low
-            if np.sum((1/m) * ((prediction - y)**2)) < self.min_loss:
+            if np.sum((1/m) * ((prediction - y)**2)) < self.tol:
                 break
 
     def predict(self, x):
