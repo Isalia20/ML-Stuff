@@ -5,9 +5,10 @@ class LinearRegression:
 
     def __init__(self,
                  fit_intercept=True,
-                 learning_rate=0.1,
-                 steps=100,
-                 tol=0.001  # Loss after which fitting should stop
+                 learning_rate=0.1,  # learning rate for gradient descent
+                 steps=100,  # Steps for gradient descent to take
+                 tol=0.001,  # Loss after which fitting should stop
+                 random_state=42  # Random state for reproducing results
                  ):
         self.fit_intercept = fit_intercept
         self.learning_rate = learning_rate
@@ -15,8 +16,10 @@ class LinearRegression:
         self.tol = tol
         self.weight_matrix = None
         self.bias = 0
+        self.random_state = random_state
 
     def _initialize_weight_matrices(self, x):
+        np.random.seed(self.random_state)
         self.weight_matrix = np.random.normal(0, 0.1, (x.shape[1], 1))
         if self.fit_intercept:
             self.bias = np.random.normal(0, 0.1)
