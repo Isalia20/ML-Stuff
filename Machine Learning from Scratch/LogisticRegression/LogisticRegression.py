@@ -8,7 +8,7 @@ class LogisticRegression:
                  learning_rate=0.1,  # learning rate for gradient descent
                  max_iter=100,  # Steps for gradient descent to take
                  tol=0.001,  # Loss after which fitting should stop
-                 class_imbalance=2,  # Amount of times class 1 is lower than class 0 for gradient descent
+                 # class_imbalance=2,  # Amount of times class 1 is lower than class 0 for gradient descent
                  threshold=0.5,  # Threshold for determining binary classification
                  random_state=42  # Random state for reproducing results
                  ):
@@ -16,7 +16,7 @@ class LogisticRegression:
         self.learning_rate = learning_rate
         self.max_iter = max_iter
         self.tol = tol
-        self.class_imbalance = class_imbalance
+        # self.class_imbalance = class_imbalance
         self.threshold = threshold
         self.weight_matrix = None
         self.bias = 0
