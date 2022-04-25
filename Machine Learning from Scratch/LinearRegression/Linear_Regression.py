@@ -6,13 +6,13 @@ class LinearRegression:
     def __init__(self,
                  fit_intercept=True,
                  learning_rate=0.1,  # learning rate for gradient descent
-                 steps=100,  # Steps for gradient descent to take
+                 max_iter=100,  # Maximum iterations for gradient descent to take
                  tol=0.001,  # Loss after which fitting should stop
                  random_state=42  # Random state for reproducing results
                  ):
         self.fit_intercept = fit_intercept
         self.learning_rate = learning_rate
-        self.steps = steps
+        self.max_iter = max_iter
         self.tol = tol
         self.weight_matrix = None
         self.bias = 0
@@ -28,7 +28,7 @@ class LinearRegression:
         self._initialize_weight_matrices(x)
         m = x.shape[0]
         y = y.reshape(-1, 1)
-        for _ in range(self.steps):
+        for _ in range(self.max_iter):
             prediction = x @ self.weight_matrix + self.bias
             derivative = (1/m) * ((prediction - y).T @ x).T  # shape of (1,m) by shape of (m,5).
             self.weight_matrix -= self.learning_rate * derivative
