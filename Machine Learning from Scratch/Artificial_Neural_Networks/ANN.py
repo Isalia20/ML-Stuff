@@ -79,7 +79,7 @@ class FeedForwardNeuralNetwork:
             z_backprop = self.cache[layer_index][1]
             x_backprop = self.cache[layer_index][0]
             if index == 0:
-                dL_da = -(1/m) * (y / a_backprop + (1-y) / (1-a_backprop))
+                dL_da = -(1/m) * (y / a_backprop + (1-y) / (1-a_backprop))  # error here
                 if self.network_architecture[layer_index][1] == "logistic":
                     da_dz = self.sigmoid_function(z_backprop) * (1 - self.sigmoid_function(z_backprop))  # Need to implement other functions as well
                 dL_dz = dL_da * da_dz
