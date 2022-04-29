@@ -79,14 +79,17 @@ class FeedForwardNeuralNetwork:
             z_backprop = self.cache[layer_index][1]
             x_backprop = self.cache[layer_index][0]
             if index == 0:
-                dL_da = -(1/m) * (y / a_backprop + (1-y) / (1-a_backprop))  # error here TODO
+                dL_da = (1/m) * (-y/a_backprop + (1-y)/(1-a_backprop))
                 if self.network_architecture[layer_index][1] == "logistic":
-                    da_dz = self.sigmoid_function(z_backprop) * (1 - self.sigmoid_function(z_backprop))  # Need to implement other functions as well
+                    da_dz = a_backprop * (1 - a_backprop)  # Need to implement other functions as well
                 dL_dz = dL_da * da_dz
                 dL_dw = np.dot(x_backprop.T, dL_dz)
-                self.cache_backprop[layer_index] = (dL_dw)
+                self.cache_backprop[layer_index] = (dL_da, da_dz, dL_dz, dz_dw, dL_dw)
             else:
-                dL_dz = np.sum(dL_dz)
+                dL_dz = np.sum(self.cache_backprop[layers - 1][2])  # Retrieving dL_dz from the last layer in the network
+                # TODO need to fix this backprop part
+
+
                 dz_da = self.weight_matrices[layer_index + 1]
                 if self.network_architecture[layer_index][1] == "relu":
                     da_dz = (z_backprop > 0).astype(int)
@@ -113,5 +116,9 @@ class FeedForwardNeuralNetwork:
             y_pred = self.feed_forward(x)
             print("Loss for epoch " + str(i) + " is " + str(self.calculate_loss(y, y_pred)))
             self.backwards_prop(y)
+
+    def predict(self, x):
+        predictions = self.feed_forward(x)
+        return predictions
 
 # Not finished
