@@ -1,4 +1,8 @@
-#WIP
+# WIP
+# TODO add removing stopwords as they dont add much meaning in differentiating sentences from each other
+# TODO take a look at architecture and improve it to being able to predict with 1 tensor
+# TODO add functions for getting ready prediction texts with single function
+# TODO look at triplet loss once again
 import pandas as pd
 import numpy as np
 import nltk
@@ -12,14 +16,13 @@ import string
 class PreProcessData:
     def __init__(self):
         # Vocabulary dictionary where key is word and values are numbers
-        self.vocab_dict_1 = None
-        self.vocab_dict_2 = None
+        self.vocab_dict = None
         # Vocabulary dictionary where key is integer and values are words
-        self.vocab_dict_integer_1 = None
-        self.vocab_dict_integer_2 = None
+        self.vocab_dict_integer = None
         self.max_len = None
 
-    def _process_dataframe(self, dataframe_path):
+    @staticmethod
+    def _process_dataframe(dataframe_path):
         dataframe = pd.read_csv(dataframe_path)
         dataframe = dataframe[dataframe["is_duplicate"] == 1]
         Q1 = dataframe["question1"].to_numpy()
@@ -65,20 +68,18 @@ class PreProcessData:
 
         return Q1_processed, Q2_processed, is_duplicate
 
-    @staticmethod
-    def get_max_sentence_len(Q1_processed, Q2_processed):
+    def get_max_sentence_len(self, Q1_processed, Q2_processed):
         Q_processed = Q1_processed + Q2_processed
         max_len = 0
         for sentence in Q_processed:
             sentence_len = len(sentence)
             if sentence_len > max_len:
                 max_len = sentence_len
-        return max_len
+        self.max_len = max_len
 
-    @staticmethod
-    def pad_sentence(sentence, pad, max_len):
+    def pad_sentence(self, sentence, pad):
         sentence_len = len(sentence)
-        max_len = 2 ** (int(np.log2(max_len)) + 1)  # For better computations on GPU
+        max_len = 2 ** (int(np.log2(self.max_len)) + 1)  # For better computations on GPU
         sentence = sentence + [pad] * (max_len - sentence_len)
         return sentence
 
@@ -96,43 +97,56 @@ class PreProcessData:
                     else:
                         vocab_q2.add(word)
 
-        vocab_dict_q1 = {}
-        vocab_dict_q2 = {}
+        vocab_dict = {}
 
         vocab_sets = [vocab_q1, vocab_q2]
-        vocab_dicts = [vocab_dict_q1, vocab_dict_q2]
 
-        for vocab_set, vocab_dict in zip(vocab_sets, vocab_dicts):
+        for vocab_set in vocab_sets:
             # We start from 1 due to reason of adding padding tokens equal 0
             for number, items in enumerate(vocab_set, 1):
                 word = items
                 vocab_dict[word] = number
 
-        return vocab_dict_q1, vocab_dict_q2
+        return vocab_dict
 
     def _prepare_train_data(self, dataframe_path, n_rows):
         Q1_processed, Q2_processed, is_duplicate = self._preprocess_data(dataframe_path, n_rows)
-        max_len = self.get_max_sentence_len(Q1_processed, Q2_processed)
-        self.vocab_dict_1, self.vocab_dict_2 = self._create_word_indices(Q1_processed, Q2_processed)
+        self.get_max_sentence_len(Q1_processed, Q2_processed)
+        self.vocab_dict = self._create_word_indices(Q1_processed, Q2_processed)
         y = is_duplicate  # x is defined later
         Q1_integers = []
         Q2_integers = []
         questions = [Q1_processed, Q2_processed]
         questions_integers = [Q1_integers, Q2_integers]
-        vocab_dicts = [self.vocab_dict_1, self.vocab_dict_2]
         for question_index in range(len(questions)):
-            vocab_dict_temp = vocab_dicts[question_index]
             for sentence in questions[question_index]:
                 word_nums = []
                 for word in sentence:
-                    word_num = vocab_dict_temp.get(word)
+                    word_num = self.vocab_dict.get(word)
                     word_nums.append(word_num)
                 # (sentence, pad, max_len)
-                word_nums = self.pad_sentence(word_nums, 0, max_len)
+                word_nums = self.pad_sentence(word_nums, 0)
                 question_integers_list = questions_integers[question_index]
                 question_integers_list.append(word_nums)
         x = questions_integers
         return x, y
+
+    def preprocess_prediction_sentence(self, sentence, pad):
+        """
+        Function for preprocessing prediction sentence after model is fitted
+        :return:
+        Sentence preprocessed, final return is a list with integers
+        """
+        ps = PorterStemmer()
+        sentence = nltk.word_tokenize(sentence)
+        new_sentence = []
+        for word in sentence:
+            word = ps.stem(word.lower())
+            word = word.translate(str.maketrans('', '', string.punctuation))
+            word_integer = self.vocab_dict.get(word, 0)
+            new_sentence.append(word_integer)
+        new_sentence = self.pad_sentence(new_sentence, pad)
+        return new_sentence
 
     def _generate_word_num_vocabs(self):
         """
@@ -140,14 +154,9 @@ class PreProcessData:
         first is where key is word and value is number
         and second is where key is number and value is word
         """
-        vocab_dicts = [self.vocab_dict_1, self.vocab_dict_2]
-        num_dicts = [self.vocab_dict_integer_1, self.vocab_dict_integer_2]
 
-        for vocab_dict_index in range(len(vocab_dicts)):
-            vocab_dict = vocab_dicts[vocab_dict_index]
-            num_dict = num_dicts[vocab_dict_index]
-            for key, value in vocab_dict.items():
-                num_dict[value] = key
+        for key, value in self.vocab_dict.items():
+            self.vocab_dict_integer[value] = key
 
     def create_triplets(self, dataframe_path, n_rows):
         x, y = self._prepare_train_data(dataframe_path, n_rows)
@@ -157,32 +166,10 @@ class PreProcessData:
         for _ in range(all_samples):
             anchor = Q1.pop(0)
             positive = Q2.pop(0)
-            rand_negative = np.random.choice(2)
-            if rand_negative == 0:
-                try:
-                    random_sample = np.random.choice(len(Q1))
-                    negative = Q1[random_sample]
-                except ValueError:
-                    continue
-            else:
-                try:
-                    random_sample = np.random.choice(len(Q2))
-                    negative = Q2[random_sample]
-                except ValueError:
-                    continue
             anchor = np.array(anchor)
             positive = np.array(positive)
-            negative = np.array(negative)
-            triplets.append((anchor, positive, negative))
+            triplets.append((anchor, positive))
         return triplets
-
-
-class DistanceLayer:
-
-    def dist_call(self, anchor, positive, negative):
-        ap_distance = tf.reduce_sum(tf.square(anchor - positive), -1)
-        an_distance = tf.reduce_sum(tf.square(anchor - negative), -1)
-        return ap_distance, an_distance
 
 
 preprocess = PreProcessData()
@@ -190,12 +177,10 @@ triplets = preprocess.create_triplets("train_quora.csv", 1000000)
 
 anchors = tf.convert_to_tensor([tf.reshape(i[0], (1, 128)) for i in triplets])
 positives = tf.convert_to_tensor([tf.reshape(i[1], (1, 128)) for i in triplets])
-negatives = tf.convert_to_tensor([tf.reshape(i[2], (1, 128)) for i in triplets])
 del triplets
 
-anchors = anchors[:10000]
-positives = positives[:10000]
-negatives = negatives[:10000]
+anchors = anchors[:100000]
+positives = positives[:100000]
 
 # This class encodes sentences into vectors so we can compute triplet loss later
 class EmbeddingLayer:
@@ -220,32 +205,38 @@ class EmbeddingLayer:
 embed_layer = EmbeddingLayer()
 vocab_size = 10000
 d_model = 512
-units = 20
+units = 100
 batch_size = 32
 model = embed_layer.build_model(vocab_size=vocab_size, d_model=d_model, units=units, input_len=anchors[0].shape[1],
                                 batch_size=batch_size)
 
 anchor_input = layers.Input(name="anchors", shape=(1, 128), batch_size=32)
 positive_input = layers.Input(name="positive", shape=(1, 128), batch_size=32)
-negative_input = layers.Input(name="negative", shape=(1, 128), batch_size=32)
 
 embedding_anchor = model(anchor_input)
 embedding_positive = model(positive_input)
-embedding_negative = model(negative_input)
 
-output = tf.keras.layers.concatenate([embedding_anchor, embedding_positive, embedding_negative], axis=1)
+output = tf.keras.layers.concatenate([embedding_anchor, embedding_positive], axis=1)
 
-net = tf.keras.models.Model([anchor_input, positive_input, negative_input], output)
+net = tf.keras.models.Model([anchor_input, positive_input], output)
 net.summary()
 
 @tf.autograph.experimental.do_not_convert
 def triplet_loss(y_true, y_pred):
-    alpha = 0.2
+    alpha = 0.5
+    anchor, positive = y_pred[:, :units], y_pred[:, units: units * 2]
+    ones = tf.ones((anchor.shape[0], anchor.shape[0]))
+    mask_upper = tf.linalg.band_part(ones, 0, -1)
+    identity = 1 - tf.eye(anchor.shape[0])
+    mask_upper *= identity  # This is to get a matrix with 1s on above
+    mask_upper = 1 - mask_upper  # Ones on the bottom side, including diagonal
+    anchor_pos = tf.linalg.matmul(anchor, tf.transpose(positive))
+    anchor_pos = anchor_pos * mask_upper
+    positive_dist = tf.math.reduce_mean(tf.linalg.tensor_diag_part(anchor_pos))
+    negative_dist = anchor_pos * (1 - tf.eye(anchor.shape[0]))
+    negative_dist = tf.math.reduce_mean(negative_dist)
+    return tf.maximum(negative_dist - positive_dist + alpha, 0.)
 
-    anchor, positive, negative = y_pred[:, :units], y_pred[:, units: units * 2], y_pred[:, units * 2:]
-    positive_dist = tf.reduce_mean(tf.square(anchor - positive), axis=1)
-    negative_dist = tf.reduce_mean(tf.square(anchor - negative), axis=1)
-    return tf.maximum(positive_dist - negative_dist + alpha, 0.)
 
 def data_generator(batch_size=32, embedding_size=100):
     i = 0
@@ -253,18 +244,47 @@ def data_generator(batch_size=32, embedding_size=100):
 
     while True:
         x = [anchors[i * batch_size:batch_size * (i + 1)],
-             positives[i * batch_size : batch_size * (i + 1)],
-             negatives[i * batch_size : batch_size * (i + 1)]]
-        y = np.zeros((batch_size, 3 * embedding_size))
+             positives[i * batch_size:batch_size * (i + 1)]]
+        y = np.zeros((batch_size, 2 * embedding_size))
+        i += 1
         yield x, y
 
 batch_size = 32
-epochs = 10
+epochs = 1
 steps_per_epoch = int(anchors.shape[0]/batch_size)
-net.compile(loss=triplet_loss, optimizer='adam')
+net.compile(loss=triplet_loss, optimizer=tf.keras.optimizers.Adam(learning_rate=0.001))
 
-_ = net.fit(
-    data_generator(batch_size),
-    steps_per_epoch=steps_per_epoch,
-    epochs=epochs
-)
+net.fit(data_generator(batch_size), steps_per_epoch=steps_per_epoch, epochs=epochs)
+
+
+#---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# Testing
+anchor_tmp = "Considering how good computers are now, how come we don't have Blu-ray drives in them?"
+positive_tmp = "Why aren't there any Blu-ray drives in new laptops?"
+negative_tmp = "I wanted to design a computer however I couldn't get any new DVDs on it. What should I do?"
+
+anchor_tmp = preprocess.preprocess_prediction_sentence(anchor_tmp, 0)
+positive_tmp = preprocess.preprocess_prediction_sentence(positive_tmp, 0)
+negative_tmp = preprocess.preprocess_prediction_sentence(negative_tmp, 0)
+
+anchor_tmp = tf.convert_to_tensor(anchor_tmp)
+positive_tmp = tf.convert_to_tensor(positive_tmp)
+negative_tmp = tf.convert_to_tensor(negative_tmp)
+
+anchor_tmp = tf.reshape(anchor_tmp, (1, 1, 128))
+positive_tmp = tf.reshape(positive_tmp, (1, 1, 128))
+negative_tmp = tf.reshape(negative_tmp, (1, 1, 128))
+
+anchor_tmp = tf.repeat(anchor_tmp, 32, axis=0)
+positive_tmp = tf.repeat(positive_tmp, 32, axis=0)
+negative_tmp = tf.repeat(negative_tmp, 32, axis=0)
+
+prediction_pos = net.predict([anchor_tmp, positive_tmp])[:1]
+prediction_neg = net.predict([anchor_tmp, negative_tmp])[:1]
+
+anchor_encoding = prediction_pos[:, :20]
+positive_encoding = prediction_pos[:, 20:40]
+negative_encoding = prediction_neg[:, 20:40]
+
+tf.linalg.matmul(anchor_encoding, tf.transpose(positive_encoding))
+tf.linalg.matmul(anchor_encoding, tf.transpose(negative_encoding))
