@@ -3,6 +3,7 @@
 # TODO take a look at architecture and improve it to being able to predict with 1 tensor
 # TODO add functions for getting ready prediction texts with single function
 # TODO look at triplet loss once again
+# TODO finish data generator function
 import pandas as pd
 import numpy as np
 import nltk
@@ -148,13 +149,14 @@ class PreProcessData:
         new_sentence = self.pad_sentence(new_sentence, pad)
         return new_sentence
 
-    def _generate_word_num_vocabs(self):
+    def generate_word_num_vocabs(self):
         """
         This function returns two types of dictionaries
         first is where key is word and value is number
         and second is where key is number and value is word
         """
 
+        self.vocab_dict_integer = {}
         for key, value in self.vocab_dict.items():
             self.vocab_dict_integer[value] = key
 
@@ -173,17 +175,35 @@ class PreProcessData:
 
 
 preprocess = PreProcessData()
-triplets = preprocess.create_triplets("train_quora.csv", 1000000)
+triplets = preprocess.create_triplets("train_quora.csv", 10000)
+max_len = triplets[0][0].shape[0]
 
-anchors = tf.convert_to_tensor([tf.reshape(i[0], (1, 128)) for i in triplets])
-positives = tf.convert_to_tensor([tf.reshape(i[1], (1, 128)) for i in triplets])
+anchors = tf.convert_to_tensor([tf.reshape(i[0], (1, max_len)) for i in triplets])
+positives = tf.convert_to_tensor([tf.reshape(i[1], (1, max_len)) for i in triplets])
 del triplets
 
-anchors = anchors[:100000]
-positives = positives[:100000]
+anchors = anchors[:10000]
+positives = positives[:10000]
+
 
 # This class encodes sentences into vectors so we can compute triplet loss later
+class MeanNormalizationLayer(keras.layers.Layer):
+    @tf.autograph.experimental.do_not_convert
+    def call(self, inputs, mask=None, training=None, initial_state=None):
+        return inputs / tf.math.sqrt(tf.math.reduce_sum(inputs * inputs, axis=-1, keepdims=True))
+
+
+class CalculateMean(keras.layers.Layer):
+    @tf.autograph.experimental.do_not_convert
+    def call(self, inputs, mask=None, training=None, initial_state=None):
+        return tf.math.reduce_mean(inputs, axis=1, keepdims=True)
+
+
 class EmbeddingLayer:
+    def __init__(self):
+        self.MeanNormalizeLayer = MeanNormalizationLayer
+        #self.CalculateMean = CalculateMean
+
     def build_model(self, vocab_size, d_model, units, input_len, batch_size):
         model = keras.Sequential(
             [
@@ -195,11 +215,17 @@ class EmbeddingLayer:
                 layers.Reshape((input_len, d_model), input_shape=(1, batch_size, 1, input_len, d_model)),
                 layers.LSTM(units=units, input_dim=(batch_size, input_len, d_model), return_sequences=True),
                 layers.LSTM(units=units, input_dim=(batch_size, d_model), return_sequences=True),
+                layers.LSTM(units=units, input_dim=(batch_size, d_model), return_sequences=True),
+                layers.LSTM(units=units, input_dim=(batch_size, d_model), return_sequences=True),
+                layers.LSTM(units=units, input_dim=(batch_size, d_model), return_sequences=True),
+                layers.LSTM(units=units, input_dim=(batch_size, d_model), return_sequences=True),
+                layers.LSTM(units=units, input_dim=(batch_size, d_model), return_sequences=True),
                 layers.LSTM(units=units, input_dim=(batch_size, d_model)),
+                #self.CalculateMean(),  #  (32, 20)
+                self.MeanNormalizeLayer()
             ]
         )
         return model
-
 
 
 embed_layer = EmbeddingLayer()
@@ -210,8 +236,8 @@ batch_size = 32
 model = embed_layer.build_model(vocab_size=vocab_size, d_model=d_model, units=units, input_len=anchors[0].shape[1],
                                 batch_size=batch_size)
 
-anchor_input = layers.Input(name="anchors", shape=(1, 128), batch_size=32)
-positive_input = layers.Input(name="positive", shape=(1, 128), batch_size=32)
+anchor_input = layers.Input(name="anchors", shape=(1, max_len), batch_size=32)
+positive_input = layers.Input(name="positive", shape=(1, max_len), batch_size=32)
 
 embedding_anchor = model(anchor_input)
 embedding_positive = model(positive_input)
@@ -221,21 +247,85 @@ output = tf.keras.layers.concatenate([embedding_anchor, embedding_positive], axi
 net = tf.keras.models.Model([anchor_input, positive_input], output)
 net.summary()
 
+
 @tf.autograph.experimental.do_not_convert
 def triplet_loss(y_true, y_pred):
-    alpha = 0.5
+    """
+    Triplet loss with negative hard mining
+    """
+    margin = 0.2
     anchor, positive = y_pred[:, :units], y_pred[:, units: units * 2]
-    ones = tf.ones((anchor.shape[0], anchor.shape[0]))
-    mask_upper = tf.linalg.band_part(ones, 0, -1)
-    identity = 1 - tf.eye(anchor.shape[0])
-    mask_upper *= identity  # This is to get a matrix with 1s on above
-    mask_upper = 1 - mask_upper  # Ones on the bottom side, including diagonal
-    anchor_pos = tf.linalg.matmul(anchor, tf.transpose(positive))
-    anchor_pos = anchor_pos * mask_upper
-    positive_dist = tf.math.reduce_mean(tf.linalg.tensor_diag_part(anchor_pos))
-    negative_dist = anchor_pos * (1 - tf.eye(anchor.shape[0]))
-    negative_dist = tf.math.reduce_mean(negative_dist)
-    return tf.maximum(negative_dist - positive_dist + alpha, 0.)
+    # new implementation
+    scores = tf.linalg.matmul(anchor, tf.transpose(positive))
+    positives = tf.linalg.tensor_diag_part(scores)
+    negative_without_positive = scores - 2.0 * tf.eye(anchor.shape[0])
+    closest_negative = tf.math.reduce_max(negative_without_positive, axis=1)
+    negative_zero_on_duplicate = scores * (1.0 - tf.eye(batch_size))
+    mean_negative = tf.math.reduce_sum(negative_zero_on_duplicate, axis=1) / (anchor.shape[0] - 1)
+    triplet_loss_1 = tf.math.maximum(0.0, margin - positives + closest_negative)
+    triplet_loss_2 = tf.math.maximum(0.0, margin - positives + mean_negative)
+    triplet_loss = tf.math.reduce_mean(triplet_loss_1 + triplet_loss_2)
+    return triplet_loss
+
+class DataGenerator:
+    def __init__(self, list_IDs, labels, batch_size=32, embedding_size=100, shuffle=True):
+        self.embedding_size = embedding_size
+        self.batch_size = batch_size
+        self.labels = labels
+        self.list_IDs = list_IDs
+        self.shuffle = shuffle
+        self.indexes = None
+        self.on_epoch_end()
+
+    def __len__(self):
+        """
+        Denotes the number of batches per epoch
+        """
+        return int(np.floor(len(self.list_IDs) / self.batch_size))
+
+    def __getitem__(self, index):
+        """
+        Generate one batch of data
+        """
+        # Generate indexes of the batch
+        indexes = self.indexes[index * self.batch_size:(index + 1) * self.batch_size]
+
+        # Find list of IDs
+        list_IDs_temp = [self.list_IDs[k] for k in indexes]
+
+        # Generate data
+        X, y = self.__data_generation(list_IDs_temp)
+
+        return X, y
+
+    def on_epoch_end(self):
+        'Updates indexes after each epoch'
+        self.indexes = np.arange(len(self.list_IDs))
+        if self.shuffle == True:
+            np.random.shuffle(self.indexes)
+
+    def __data_generation(self, list_IDs_temp):
+        """Generates data containing batch_size samples"""  # X : (n_samples, *dim, n_channels)
+        # Initialization
+        X = np.empty((self.batch_size, *self.dim, self.n_channels))
+        [anchors[batch_size:batch_size],
+             positives[i * batch_size:batch_size * (i + 1)]]
+
+        y = np.empty((self.batch_size), dtype=int)
+
+        x = [anchors[i * batch_size:batch_size * (i + 1)],
+             positives[i * batch_size:batch_size * (i + 1)]]
+        y = np.zeros((batch_size, 2 * embedding_size))
+
+        # Generate data
+        for i, ID in enumerate(list_IDs_temp):
+            # Store sample
+            X[i,] = np.load('data/' + ID + '.npy')
+
+            # Store class
+            y[i] = self.labels[ID]
+
+        return X, keras.utils.to_categorical(y, num_classes=self.n_classes)
 
 
 def data_generator(batch_size=32, embedding_size=100):
@@ -249,42 +339,10 @@ def data_generator(batch_size=32, embedding_size=100):
         i += 1
         yield x, y
 
+1000 // 32
+
 batch_size = 32
-epochs = 1
-steps_per_epoch = int(anchors.shape[0]/batch_size)
-net.compile(loss=triplet_loss, optimizer=tf.keras.optimizers.Adam(learning_rate=0.001))
-
+epochs = 3
+steps_per_epoch = int(anchors.shape[0] / batch_size)
+net.compile(loss=triplet_loss, optimizer=tf.keras.optimizers.Adam(learning_rate=0.0001))
 net.fit(data_generator(batch_size), steps_per_epoch=steps_per_epoch, epochs=epochs)
-
-
-#---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-# Testing
-anchor_tmp = "Considering how good computers are now, how come we don't have Blu-ray drives in them?"
-positive_tmp = "Why aren't there any Blu-ray drives in new laptops?"
-negative_tmp = "I wanted to design a computer however I couldn't get any new DVDs on it. What should I do?"
-
-anchor_tmp = preprocess.preprocess_prediction_sentence(anchor_tmp, 0)
-positive_tmp = preprocess.preprocess_prediction_sentence(positive_tmp, 0)
-negative_tmp = preprocess.preprocess_prediction_sentence(negative_tmp, 0)
-
-anchor_tmp = tf.convert_to_tensor(anchor_tmp)
-positive_tmp = tf.convert_to_tensor(positive_tmp)
-negative_tmp = tf.convert_to_tensor(negative_tmp)
-
-anchor_tmp = tf.reshape(anchor_tmp, (1, 1, 128))
-positive_tmp = tf.reshape(positive_tmp, (1, 1, 128))
-negative_tmp = tf.reshape(negative_tmp, (1, 1, 128))
-
-anchor_tmp = tf.repeat(anchor_tmp, 32, axis=0)
-positive_tmp = tf.repeat(positive_tmp, 32, axis=0)
-negative_tmp = tf.repeat(negative_tmp, 32, axis=0)
-
-prediction_pos = net.predict([anchor_tmp, positive_tmp])[:1]
-prediction_neg = net.predict([anchor_tmp, negative_tmp])[:1]
-
-anchor_encoding = prediction_pos[:, :20]
-positive_encoding = prediction_pos[:, 20:40]
-negative_encoding = prediction_neg[:, 20:40]
-
-tf.linalg.matmul(anchor_encoding, tf.transpose(positive_encoding))
-tf.linalg.matmul(anchor_encoding, tf.transpose(negative_encoding))
