@@ -1,7 +1,6 @@
 # WIP
 # TODO take a look at architecture and improve it to being able to predict with 1 tensor
 # TODO add functions for getting ready prediction texts with single function
-# TODO look at triplet loss once again
 import os
 os.chdir("SiameseNetwork_Final")
 import sys
