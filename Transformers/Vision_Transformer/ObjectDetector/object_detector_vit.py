@@ -406,6 +406,75 @@ class DetrEncoderLayer(nn.Module):
             outputs += (attn_weights, )
 
         return outputs
+    
+    
+class DetrEncoder(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.dropout = config.dropout
+        self.layerdrop = config.encoder_layerdrop
+        
+        self.layers = nn.ModuleList([DetrEncoderLyaer(config) for _ in range(config.encoder_layers)])
+    
+    def forward(
+        self,
+        inputs_embeds=None,
+        attention_mask=None,
+        object_queries=None,
+        output_attentions=None,
+        output_hidden_states=None,
+        return_dict=None,
+        **kwargs,
+    ):
+        position_embeddings = kwargs.pop("position_embeddings", None)
+        
+        if position_embeddings is not None and object_queries is not None:
+            raise ValueError(
+                "Cannot specify both position_embeddings and object_queries. Please use just object_queries"
+            )
+        if position_embeddings is not None:
+            object_queries = position_embeddings
+        
+        hidden_states = inputs_embeds
+        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+        
+        #expand attention_mask
+        if attention_mask is not None:
+            # [B, seq_len] -> [B, 1, target_seq_len, source_seq_len]
+            attention_mask = _expand_mask(attention_mask, inputs_embeds.dtype)
+        
+        encoder_states = () if output_hidden_states else None
+        all_attentions = () if output_attentions else None
+        for encoder_layer in self.layers:
+            if output_hidden_states:
+                encoder_states = encoder_states + (hidden-states,)
+            to_drop = False
+            if self.training:
+                dropout_probability = torch.rand([])
+                if dropout_probability < self.layerdrop: # skip the layer
+                    to_drop = True
+            
+            if to_drop:
+                layer_outputs = (None, None)
+            else:
+                # we add object_queries as extra input to the encoder layer
+                layer_outputs = encoder_layer(
+                    hidden_states,
+                    attention_mask,
+                    object_queries=object_queries,
+                    output_attentions=output_attentions,
+                )
+                
+                hidden_states = layer_outputs[0]
+            
+            if output_attentions:
+                all_attentions = all_attentions + (layer_outputs[1], )
+        
+        if output_hidden_states:
+            encoder_states = encoder_states + (hidden_states, )
+        
+        return tuple(v for v in [hidden_states, encoder_states, all_attentions] if v is not None)
+        
 
 
 class DetrDecoderLayer(nn.Module):
@@ -610,7 +679,7 @@ class DetrDecoder(nn.Module):
 
 
 class DetrModel(nn.Module):
-    def __init__(self)    :
+    def __init__(self, config):
         super().__init__()
         
         # Create backbone + positional encoding
@@ -618,9 +687,196 @@ class DetrModel(nn.Module):
         object_queries = DetrPositionalEmbedder(position_embedding_type="learned", embedding_dim=256)
         self.backbone = DetrConvModel(backbone, object_queries)
         
+        # Create a projection layer
+        self.input_projection = nn.Conv2d(backbone.intermediate_channel_size[-1], d_model, kernel_size=1)
+        
+        self.query_position_embeddings = nn.Embedding(config.num_queries, d_model)
+        
+        self.encoder = DetrEncoder(config)
+        self.decoder = DetrDecoder(config)
+        
+    def get_encoder(self):
+        return self.encoder
     
+    def get_decoder(self):
+        return self.decoder
+    
+    def freeze_backbone(self);
+        for _, param in self.backbone.conv_encoder.model.named_parameters():
+            param.requires_grad_(False)
 
-#TODO encoder done, now remains the loss decoder and all other stuff, omg this model is big.
+    def unfreeze_backbone(self):
+        for _, param in self.backbone.conv_encoder.model.named_parameters():
+            param.requires_grad_(True)
+    
+    def forward(
+        self,
+        pixel_values: torch.FloatTensor,
+        pixel_mask: Optional[torch.LongTensor] = None,
+        encoder_outputs: Optional[torch.FloatTensor] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+    ) -> Tuple[torch.FloatTensor]:
+        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_hidden_states = (
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        )
+        batch_size, num_channels, height, width = pixel_values.shape
+        device = pixel_values.device
+        
+        if pixel_mask is None:
+            pixel_mask = torch.ones(((batch_size, height, width)), device=device)
+        
+        # First, sent pixel_values + pixel_mask through Backbone to obtain the features
+        # pixel_values should be of shape (B, num_ch, H, W)
+        # pixel_mask should be of shape (B, H, W)
+        features, object_queries_list = self.backbone(pixel_values, pixel_mask)
+        
+        # get final feature map and downsampled mask
+        feature_map, mask = features[-1]
+        
+        if mask is None:
+            raise ValueError("Backbone does not return downsampled pixel mask")
+
+        # Second, apply 1x1 convolution to reduce the channel dimension to d_model (256 by default)
+        projected_feature_map = self.input_projection(feature_map)
+        
+        # Third, flatten the feature map + position embeddings of shape NxCxHxW to NxCxHW and permute it to NxHWxC
+        # i.e. turn the shape to [B, seq_len, hidden_size] (if you understand transformer inputs more)
+        flattened_features = projected_feature_map.flatten(2).permute(0, 2, 1)
+        object_queries = object_queries_list[-1].flatten(2).permute(0, 2, 1)
+        
+        # Mask from [B, H, W] -> [B, HW]
+        flattened_mask = mask.flatten(1)
+        
+        # Fourth, send flattened_features + flattened_mask + position_embeddings through encoder
+        # flattened features is a Tensor of shape (B, HW, hidden_size)
+        # flattened_mask is a Tensor of shape (B, HW)
+        if encoder_outputs is None:
+            encoder_outputs = self.encoder(
+                inputs_embeds=flattened_features,
+                attention_mask=flattened_mask,
+                object_queries=object_queries,
+                output_attentions=output_attentions, # bool
+                output_hidden_states=output_hidden_states, # bool
+                return_dict=return_dict, # bool
+            )
+
+        # Fifth, send query embeddings + object_queries through the decoder(which is conditioned on the encoder output)
+        query_position_embeddings = self.query_position_embeddings.weight.unsqueeze(0).repeat(batch_size, 1, 1)
+        queries = torch.zeros_like(query_position_embeddings)
+        
+        # decoder outputs consists of (dec_features, dec_hidden, dec_attn)
+        decoder_outputs = self.decoder(
+            inputs_embeds=queries,
+            attention_mask=None,
+            object_queries=object_queries,
+            query_position_embeddings=query_position_embeddings,
+            encoder_hidden_states=encoder_outputs[0],
+            encoder_attention_mask=flattened_mask,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+        
+        if not return_dict:
+            return decoder_outputs + encoder_outputs
+
+
+class DetrMLPPredictionHead(nn.Module):
+    "Simple MLP used to predict the normalized center coordinates, height and width of the bbox w.r.t an image"
+    def __init__(self, input_dim, hidden_dim, output_dim, num_layers):
+        super().__init__()
+        self.num_layers = num_layers
+        h = [hidden_dim] * (num_layers - 1)
+        self.layers = nn.ModuleList(nn.Linear(n, k) for n, k in zip([input_dim] + h, h + [output_dim]))
+    
+    def forward(self, x):
+        for i, layer in enumerate(self.layers):
+            x = nn.functional.relu(layer(x)) if i < self.num_layers - 1 else layer(x)
+        return x
+
+
+class DetrForObjectDetection(nn.Module):
+    def __init__(self, config):
+        super().__init__(config)
+        
+        # DETR encoder-decoder model
+        self.model = DetrModel(config)
+        
+        # Object detection heads
+        self.class_labels_classifier = nn.Linear(
+            config.d_model, config.num_labels + 1,
+        ) # Add one for the no object class
+        self.bbox_predictor = DetrMLPPredictionHead(
+            input_dim=config.d_model, hidden_dim=config.d_model, output_dim=4, num_layers=3,
+        )
+
+    def forward(
+        self,
+        pixel_values: torch.FloatTensor,
+        pixel_mask: Optional[torch.LongTensor] = None,
+        decoder_attention_mask: Optional[torch.FloatTensor] = None,
+        encoder_outputs: Optional[torch.FloatTensor] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        decoder_inputs_embeds: Optional[torch.FloatTensor] = None,
+        labels: Optional[List[dict]] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+    ) -> Tuple[torch.FloatTensor]:
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        
+        # First, send images through DETR base model to obtain encoder + decoder outputs
+        outputs = self.model(
+            pixel_values,
+            pixel_mask=pixel_mask,
+            decoder_attention_mask=decoder_attention_mask,
+            encoder_outputs=encoder_outputs,
+            inputs_embeds=inputs_embeds,
+            decoder_inputs_embeds=decoder_inputs_embeds,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+        
+        sequence_output = outputs[0]
+        
+        # class logits + predicted bounding boxes
+        logits = self.class_labels_classifier(sequence_output)
+        pred_boxes = self.bbox_predictor(sequence_output).sigmoid()
+        
+        loss, loss_dict, aux_outputs = None, None, None
+        if labels is not None:
+            # First create the matcher
+            matcher = DetrHungarianMatcher(
+                class_cost=self.config.class_cost,
+                bbox_cost=self.config.bbox_cost,
+                giou_cost=self.config.giou_cost,
+            )
+            # Second create the criterion
+            losses = ["labels", "boxes", "cardinality"]
+            criterion = DetrLoss(
+                matcher=matcher,
+                num_classes=self.config.num_labels,
+                eos_coef=self.config.eos_coefficient,
+                losses=losses,
+            )
+            criterion.to(self.device)
+            # Third compute the losses based on outputs and labels
+            outputs_loss = {}
+            outputs_loss["logits"] = logits
+            outputs_loss["pred_boxes"] = pred_boxes
+            
+            loss_dict = criterion(outputs_loss, labels)
+            # Fourth, compute total loss as a weighted sum of the various losses
+            weight_dict = {"loss_ce": 1, "loss_bbox": self.config.bbox_loss_coefficient}
+            weight_dict["loss_giou"] = self.config.giou_loss_coefficient
+            loss = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
+        output = (logits, pred_boxes) + outputs
+        return ((loss, loss_dict) + output) if loss is not None else output
+
 
 encoder_layer = DetrEncoderLayer(d_model=64, num_heads=8, encoder_ffn_dim=8, attention_dropout=0.0, dropout=0.0, activation_dropout=0.0)
 pixel_values = torch.rand((1, 3, 300, 400))
