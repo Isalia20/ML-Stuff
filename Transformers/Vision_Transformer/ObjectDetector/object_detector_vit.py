@@ -83,6 +83,21 @@ class DetrConvEncoder(nn.Module):
         return out 
 
 
+def _expand_mask(mask: torch.Tensor, dtype: torch.dtype, target_len: Optional[int] = None):
+    """
+    Expands attention_mask from `[batch_size, seq_len]` to `[batch_size, 1, target_seq_len, source_seq_len]`.
+    """
+    batch_size, source_len = mask.size()
+    target_len = target_len if target_len is not None else source_len
+
+    expanded_mask = mask[:, None, None, :].expand(batch_size, 1, target_len, source_len).to(dtype)
+
+    inverted_mask = 1.0 - expanded_mask
+
+    return inverted_mask.masked_fill(inverted_mask.bool(), torch.finfo(dtype).min)
+
+
+
 class DetrSinePositionEmbedding(nn.Module):
     def __init__(self, 
                  embedding_dim: int,
@@ -391,7 +406,220 @@ class DetrEncoderLayer(nn.Module):
             outputs += (attn_weights, )
 
         return outputs
+
+
+class DetrDecoderLayer(nn.Module):
+    def __init__(self, d_model, decoder_attention_heads, attention_dropout, dropout, activation_dropout, decoder_ffn_dim):
+        super().__init__()
+        self.embed_dim = d_model
+        
+        self.self_attn = DetrAttention(
+            embed_dim=self.embed_dim,
+            num_heads=decoder_attention_heads,
+            dropout=attention_dropout,
+        )
+        self.dropout = dropout
+        self.activation_fn = SiLU()
+        self.activation_dropout = activation_dropout
+        
+        self.self_attn_layer_norm = nn.LayerNorm(self.embed_dim)
+        self.encoder_attn = DetrAttention(
+            self.embed_dim,
+            decoder_attention_heads,
+            dropout=attention_dropout,
+        )
+        self.encoder_attn_layer_norm = nn.LayerNorm(self.embed_dim)
+        self.fc1 = nn.Linear(self.embed_dim, decoder_ffn_dim)
+        self.fc2 = nn.Linear(decoder_ffn_dim, self.embed_dim)
+        self.final_layer_norm = nn.LayerNorm(self.embed_dim)
     
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        object_queries: Optional[torch.Tensor] = None,
+        query_position_embeddings: Optional[torch.Tensor] = None,
+        encoder_hidden_states: Optional[torch.Tensor] = None,
+        encoder_attention_mask: Optional[torch.Tensor] = None,
+        output_attentions: Optional[bool] = False,
+        **kwargs,
+    ):
+        """
+        Args:
+            hidden_states (torch.FloatTensor): input to the layer of shape [B, seq_len, embed_dim]
+            attention_mask (torch.FloatTensor): attention mask of size (B, 1, target_len, source_len) where padding 
+            elements are indiicated by very large negative values
+            object_queries: object_queries that are added to the hidden_states in the cross attn layer
+            query_position_embeddings:
+                position_embeddings that are added to the queries and keys in the self-attention layer
+            encoder_hidden_states: 
+                cross attention input to the layer of shape (B, seq_len, embed_dim)
+            encoder_attention_mask: encoder attention mask of size
+                [B, 1, target_len, source_len] where padding elements are indicated by very large negative values
+            output_attentions: bool
+                Whether or not to return the attentions tensors of all attention layers. 
+        """
+        position_embeddings = kwargs.pop("position_embeddings", None)
+        
+        if position_embeddings is not None and object_queries is not None:
+            raise ValueError(
+                "Cannot specify both position_embeddings and object_queries. Please use just object_queries"
+            )
+        if position_embeddings is not None:
+            object_queries = position_embeddings
+        
+        residual = hidden_states
+        
+        # self attention
+        hidden_states, self_attn_weights = self.self_attn(
+            hidden_states=hidden_states,
+            object_queries=query_position_embeddings,
+            attention_mask=attention_mask,
+            output_attentions=output_attentions,
+        )
+        
+        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+        hidden_states = residual + hidden_states
+        hidden_states = self.self_attn_layer_norm(hidden_states)
+        
+        # Cross attention block
+        cross_attn_weights = None
+        if encoder_hidden_states is not None:
+            residual = hidden_states
+            
+            hidden_states, cross_attn_weights = self.encoder_attn(
+                hidden_states=hidden_states,
+                object_queries=query_position_embeddings,
+                key_value_states=encoder_hidden_states,
+                attention_mask=encoder_attention_mask,
+                spatial_position_embeddings=object_queries,
+                output_attentions=output_attentions,
+            )
+            
+            hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+            hidden_states = residual + hidden_states
+            hidden_states = self.encoder_attn_layer_norm(hidden_states)
+        
+        # Fully Connected
+        residual = hidden_states
+        hidden_states = self.activation_fn(self.fc1(hidden_states))
+        hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
+        hidden_states = self.fc2(hidden_states)
+        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+        hidden_states = residual + hidden_states
+        hidden_states = self.final_layer_norm(hidden_states)
+        
+        outputs = (hidden_states, )
+
+        if output_attentions:
+            outputs += (self_attn_weights, cross_attn_weights)
+        
+        return outputs
+
+
+class DetrDecoder(nn.Module):
+    def __init__(self, dropout, decoder_layerdrop, decoder_layers, d_model, decoder_attention_heads, attention_dropout, activation_dropout, decoder_ffn_dim):
+        super().__init__()
+        self.dropout = dropout
+        self.layerdrop = decoder_layerdrop
+        
+        self.layers = nn.ModuleList([DetrDecoderLayer(d_model, decoder_attention_heads, attention_dropout, 
+                                                      dropout, activation_dropout, decoder_ffn_dim) for _ in range(decoder_layers)])
+        # in DETR, the decoder uses layernorm after the last decoder layer output
+        self.layernorm = nn.LayerNorm(d_model)
+        
+        self.gradient_checkpointing = False
+    
+    def forward(self,
+                inputs_embeds=None,
+                attention_mask=None,
+                encoder_hidden_states=None,
+                encoder_attention_mask=None,
+                object_queries=None,
+                query_position_embeddings=None,
+                output_attentions=None,
+                output_hidden_states=None,
+                return_dict=None,
+                **kwargs,
+                ):
+        position_embeddings = kwargs.pop("position_embeddings", None)
+        
+        if inputs_embeds is not None:
+            hidden_states = inputs_embeds
+            input_shape = inputs_embeds.size()[:-1]
+        
+        combined_attention_mask = None
+        
+        if attention_mask is not None and combined_attention_mask is not None:
+            # [batch_size, seq_len] -> [batch_size, 1, target_seq_len, source_seq_len]
+            combined_attention_mask = combined_attention_mask + _expand_mask(
+                attention_mask, inputs_embeds.dtype, target_len=input_shape[-1]
+            )
+        
+        # expand encoder attention mask
+        if encoder_hidden_states is not None and encoder_attention_mask is not None:
+            # [batch_size, seq_len] -> [batch_size, 1, target_seq_len, source_seq_len]
+            encoder_attention_mask = _expand_mask(
+                encoder_attention_mask, inputs_embeds.dtype, target_len=input_shape[-1]
+            )
+        
+        # optional intermediate hidden states
+        intermediate = () if self.auxiliary_loss else None
+        
+        # decoder layers
+        all_hidden_states = () if output_hidden_states else None
+        all_self_attns = () if output_attentions else None
+        all_cross_attentions = () if (output_attentions and encoder_hidden_states is not None) else None
+        
+        for decoder_layer in self.lauers:
+            if output_hidden_states:
+                all_hidden_states += (hidden_states,)
+            if self.training:
+                dropout_probability = torch.rand([])
+                if dropout_probability < self.layerdrop:
+                    continue
+                
+                layer_outputs = decoder_layer(
+                    hidden_states,
+                    attention_mask=combined_attention_mask,
+                    object_queries=object_queries,
+                    query_position_embeddings=query_position_embeddings,
+                    encoder_hidden_states=encoder_hidden_states,
+                    encoder_attention_mask=encoder_attention_mask,
+                    output_attentions=output_attentions,
+                )
+            
+            hidden_states = layer_outputs[0]
+
+            if output_attentions:
+                all_self_attns += (layer_outputs[1],)
+                if encoder_hidden_states is not None:
+                    all_cross_attentions += (layer_outputs[2],)
+        # finally apply layernorm
+        hidden_states = self.layernorm(hidden_states)
+        
+        # add hidden states from the last decoder layer
+        if output_hidden_states:
+            all_hidden_states += (hidden_states,)
+        
+        return tuple(
+            v
+            for v in [hidden_states, all_hidden_states, all_self_attns, all_cross_attentions, intermediate]
+            if v is not None
+        ) 
+
+
+class DetrModel(nn.Module):
+    def __init__(self)    :
+        super().__init__()
+        
+        # Create backbone + positional encoding
+        backbone = DetrConvEncoder()
+        object_queries = DetrPositionalEmbedder(position_embedding_type="learned", embedding_dim=256)
+        self.backbone = DetrConvModel(backbone, object_queries)
+        
+    
+
 #TODO encoder done, now remains the loss decoder and all other stuff, omg this model is big.
 
 encoder_layer = DetrEncoderLayer(d_model=64, num_heads=8, encoder_ffn_dim=8, attention_dropout=0.0, dropout=0.0, activation_dropout=0.0)
@@ -400,7 +628,8 @@ pixel_mask = torch.randint(0, 2, (1, ) + pixel_values.size()[-2:])
 model = DetrConvEncoder()
 last_intermediate_channel_size = 256
 d_model = 64
-pos_embedder = DetrPositionalEmbedder("learned", d_model // 2)
+# pos_embedder = DetrPositionalEmbedder("learned", d_model // 2)
+pos_embedder = DetrPositionalEmbedder("sine", d_model // 2)
 output = model(pixel_values, pixel_mask)
 
 feature = output[0][0]
